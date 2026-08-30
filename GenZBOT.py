@@ -154,5 +154,5 @@ async def backup(ctx):
     await ctx.send("Backup เสร็จแล้ว ✅ ได้ไฟล์ `backup_...json`", file=discord.File(f"backup_{ctx.guild.id}.json"))
 
 # รันบอท - ใส่ Token ที่นี่ (ไป Reset Token ก่อน แล้วเอาอันใหม่มาใส่)
-TOKEN = os.getenv("MTU0MzYzMTAyODA0MjYwMDU2OQ.GTqE-9.MG9vRJM1ozw1cBKmXJNIWufLK9MsbH5s2n0zRI") or "MTU0MzYzMTAyODA0MjYwMDU2OQ.GTqE-9.MG9vRJM1ozw1cBKmXJNIWufLK9MsbH5s2n0zRI"
+TOKEN = os.getenv("Token_YOU") or "Token_YOU"
 bot.run(TOKEN)
