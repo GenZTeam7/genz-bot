@@ -111,21 +111,26 @@ async def on_command_error(ctx, error):
             await ctx.send(f"❌ เกิดข้อผิดพลาด: {error}", delete_after=10)
     except: pass
 
-GOODBYE_CHANNEL_NAME = "goodbye"  # จะหาห้องที่ชื่อมีคำว่า goodbye (เช่น ●°☆Goodbye)
+GOODBYE_CHANNEL_NAME = "goodbye"
+LOG_CHANNEL_NAME = "log"
 
 def get_goodbye_channel(guild):
-    # 1. หาห้องที่ชื่อมีคำว่า goodbye ก่อน
     for ch in guild.text_channels:
         if "goodbye" in ch.name.lower():
             if ch.permissions_for(guild.me).send_messages:
                 return ch
-    # 2. ถ้าไม่เจอ ใช้ system_channel
     if guild.system_channel and guild.system_channel.permissions_for(guild.me).send_messages:
         return guild.system_channel
-    # 3. ห้องแรกที่ส่งได้
     for ch in guild.text_channels:
         if ch.permissions_for(guild.me).send_messages:
             return ch
+    return None
+
+def get_log_channel(guild):
+    for ch in guild.text_channels:
+        if "log" in ch.name.lower():
+            if ch.permissions_for(guild.me).send_messages:
+                return ch
     return None
 
 # ===== ต้อนรับคนเข้า-ออก (เสถียร) =====
@@ -155,6 +160,43 @@ async def on_member_remove(member):
             await channel.send(embed=embed)
     except Exception as e:
         print(f"Goodbye error: {e}")
+
+@bot.event
+async def on_message_delete(message):
+    try:
+        if message.author.bot or not message.guild:
+            return
+        channel = get_log_channel(message.guild)
+        if not channel:
+            return
+        embed = discord.Embed(title="🗑️ ลบข้อความ", color=0xff0000, timestamp=discord.utils.utcnow())
+        embed.add_field(name="คนส่ง", value=f"{message.author.mention} ({message.author})", inline=False)
+        embed.add_field(name="ห้อง", value=message.channel.mention, inline=True)
+        content = message.content or "*ไม่มีข้อความ (อาจเป็นรูป/ไฟล์)*"
+        if len(content) > 1000:
+            content = content[:1000] + "..."
+        embed.add_field(name="ข้อความ", value=content, inline=False)
+        embed.set_footer(text=f"ID: {message.author.id}")
+        await channel.send(embed=embed)
+    except Exception as e:
+        print(f"Log delete error: {e}")
+
+@bot.event
+async def on_message_edit(before, after):
+    try:
+        if before.author.bot or not before.guild or before.content == after.content:
+            return
+        channel = get_log_channel(before.guild)
+        if not channel:
+            return
+        embed = discord.Embed(title="✏️ แก้ไขข้อความ", color=0xffa500, timestamp=discord.utils.utcnow())
+        embed.add_field(name="คนส่ง", value=f"{before.author.mention}", inline=False)
+        embed.add_field(name="ห้อง", value=before.channel.mention, inline=True)
+        embed.add_field(name="ก่อน", value=(before.content[:500] or "*ว่าง*"), inline=False)
+        embed.add_field(name="หลัง", value=(after.content[:500] or "*ว่าง*"), inline=False)
+        await channel.send(embed=embed)
+    except Exception as e:
+        print(f"Log edit error: {e}")
 
 @bot.event
 async def on_message(message):
@@ -296,6 +338,56 @@ async def roles(ctx):
         await ctx.send(embed=embed, view=GameRoleView())
     except Exception as e:
         await ctx.send(f"❌ {e}")
+
+# ===== Giveaway =====
+class GiveawayView(discord.ui.View):
+    def __init__(self, prize):
+        super().__init__(timeout=None)
+        self.prize = prize
+        self.users = set()
+    @discord.ui.button(label="🎉 เข้าร่วม", style=discord.ButtonStyle.green, custom_id="giveaway_join")
+    async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id in self.users:
+            await interaction.response.send_message("คุณเข้าร่วมแล้ว!", ephemeral=True)
+        else:
+            self.users.add(interaction.user.id)
+            await interaction.response.send_message(f"✅ เข้าร่วม Giveaway **{self.prize}** แล้ว! ({len(self.users)} คน)", ephemeral=True)
+
+def parse_duration(s):
+    try:
+        s = s.lower().strip()
+        if s.endswith("s"): return int(s[:-1])
+        if s.endswith("m"): return int(s[:-1])*60
+        if s.endswith("h"): return int(s[:-1])*3600
+        if s.endswith("d"): return int(s[:-1])*86400
+        return int(s)
+    except: return 60
+
+@bot.command(name="giveaway")
+@is_admin()
+async def giveaway(ctx, duration: str = "60s", *, prize: str = "รางวัล"):
+    try:
+        sec = parse_duration(duration)
+        if sec < 5: sec = 5
+        if sec > 86400: sec = 86400
+        view = GiveawayView(prize)
+        embed = discord.Embed(title=f"🎉 Giveaway: {prize}", description=f"กดปุ่ม **เข้าร่วม** ด้านล่าง\nจบใน **{duration}** ({sec} วินาที)\nพิมพ์โดย {ctx.author.mention}", color=0xffd700, timestamp=discord.utils.utcnow() + datetime.timedelta(seconds=sec))
+        embed.set_footer(text=f"จัดโดย {ctx.author.display_name}")
+        msg = await ctx.send(embed=embed, view=view)
+        await asyncio.sleep(sec)
+        if not view.users:
+            await ctx.send(f"😢 Giveaway **{prize}** จบแล้ว ไม่มีคนเข้าร่วมเลย")
+            try: await msg.edit(view=None)
+            except: pass
+            return
+        winner_id = random.choice(list(view.users))
+        winner = ctx.guild.get_member(winner_id)
+        mention = winner.mention if winner else f"<@{winner_id}>"
+        await ctx.send(f"🎉 Giveaway **{prize}** จบแล้ว! ผู้โชคดีคือ {mention} 🎊")
+        try: await msg.edit(view=None)
+        except: pass
+    except Exception as e:
+        await ctx.send(f"❌ {e}\nใช้: `!giveaway 10m Nitro` หรือ `!giveaway 60s ของรางวัล`")
 
 # ===== มีม + สุ่ม =====
 @bot.command(name="meme")
